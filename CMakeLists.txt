@@ -6,6 +6,7 @@ option(PD_EXTRA  "Compile extras" ON)
 option(PD_MULTI  "Compile with multiple instance support" OFF)
 option(PD_LOCALE "Set the LC_NUMERIC number format to the default C locale" ON)
 option(PD_BUILD_C_EXAMPLES "Builds C API example programs" OFF)
+set(PD_WISH "" CACHE STRING "Tcl/Tk 'wish' program name")
 
 if (MSVC)
     set(CMAKE_THREAD_LIBS_INIT CACHE PATH "Path to pthreads library binary file (ex. C:/src/vcpkg/packages/pthreads_x64-windows/lib/pthreadVC3.lib)")
@@ -34,6 +35,7 @@ if (MSVC)
         # Select appropriate long int type on 64-bit Windows
         set(CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -DPD_LONGINTTYPE=\"long long\"")
     endif()
+    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS} /fp:fast")
 else()
     set(CMAKE_C_FLAGS         "${CMAKE_C_FLAGS} -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast")
     set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS} -ffast-math -funroll-loops -fomit-frame-pointer -O3")
@@ -165,6 +167,7 @@ set(LIBPD_SOURCES
     libpd_wrapper/z_hooks.c
     libpd_wrapper/z_hooks.h
     libpd_wrapper/z_libpd.c
+    libpd_wrapper/z_libpd.h
 )
 set(LIBPD_UTILS_SOURCES
     libpd_wrapper/util/z_ringbuffer.c
@@ -180,9 +183,6 @@ source_group(pdextra    FILES ${PD_EXTRA_SOURCES})
 source_group(libpd      FILES ${LIBPD_SOURCES})
 source_group(libpdutils FILES ${LIBPD_UTILS_SOURCES})
 
-include_directories(libpd_wrapper)
-include_directories(pure-data/src)
-
 find_package(Threads REQUIRED)
 
 # create final list of source files
@@ -197,20 +197,28 @@ endif()
 add_library(libpd_static STATIC ${SOURCE_FILES})
 add_library(libpd        SHARED ${SOURCE_FILES})
 
-# set the output library name for libpd depending on the settings
-set(LIBPD_OUTPUT_NAME     pd)
-if (WIN32)
-    set(LIBPD_OUTPUT_NAME libpd)
-endif()
-if (PD_MULTI)
-    set(LIBPD_OUTPUT_NAME ${LIBPD_OUTPUT_NAME}-multi)
-endif()
-if (WIN32)
+add_library(libpd::libpd_static ALIAS libpd_static)
+add_library(libpd::libpd ALIAS libpd)
+
+# include directories
+target_include_directories(libpd_static PUBLIC libpd_wrapper pure-data/src)
+target_include_directories(libpd        PUBLIC libpd_wrapper pure-data/src)
+
+# set the output library name for libpd
+set(LIBPD_OUTPUT_NAME pd)
+if (MSVC)
     set_target_properties(libpd_static PROPERTIES OUTPUT_NAME ${LIBPD_OUTPUT_NAME}-static)
 else()
     set_target_properties(libpd_static PROPERTIES OUTPUT_NAME ${LIBPD_OUTPUT_NAME})
 endif()
-set_target_properties(libpd            PROPERTIES OUTPUT_NAME ${LIBPD_OUTPUT_NAME})
+if (WIN32 AND NOT MSVC)
+    # MinGW should use libpd.dll.a for the import library and pd.dll for the actual DLL.
+    set_target_properties(libpd PROPERTIES PREFIX "")
+    set_target_properties(libpd PROPERTIES RUNTIME_OUTPUT_NAME ${LIBPD_OUTPUT_NAME})
+    set_target_properties(libpd PROPERTIES ARCHIVE_OUTPUT_NAME ${LIBPD_OUTPUT_NAME})
+else()
+    set_target_properties(libpd PROPERTIES OUTPUT_NAME ${LIBPD_OUTPUT_NAME})
+endif()
 
 # add appropriate compile definitions
 set(LIBPD_COMPILE_DEFINITIONS PD_INTERNAL)
@@ -224,11 +232,16 @@ if(PD_EXTRA)
 endif()
 
 if(PD_MULTI)
-    list(APPEND LIBPD_COMPILE_DEFINITIONS PDINSTANCE=1 PDTHREADS=1)
+    target_compile_definitions(libpd_static PUBLIC PDINSTANCE=1 PDTHREADS=1)
+    target_compile_definitions(libpd        PUBLIC PDINSTANCE=1 PDTHREADS=1)
 endif()
 
 if(NOT PD_LOCALE)
     list(APPEND LIBPD_COMPILE_DEFINITIONS LIBPD_NO_NUMERIC=1)
+endif()
+
+if(PD_WISH)
+    list(APPEND LIBPD_COMPILE_DEFINITIONS "WISH=\"${PD_WISH}\"")
 endif()
 
 if(UNIX)
